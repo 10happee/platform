@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HTML Platformer</title>
+  <style>
+    * { margin: 0; padding: 0; }
+    canvas { background: #87ceeb; display: block; margin: 0 auto; }
+  </style>
+</head>
+<body>
+  <canvas id="game" width="800" height="450"></canvas>
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+
+    const TILE_SIZE = 32;
+    const GRAVITY = 0.5;
+    const LEVEL_WIDTH = 100; // 100 tiles wide
+    const LEVEL_HEIGHT = 15; // 15 tiles high
+    const COIN_TOTAL = 50;
+
+    const assets = {};
+    const assetUrls = {
+      ground: 'https://file.garden/ZfeUWQ_uZRgXD5Ma/costume1.png',
+      player: 'https://file.garden/ZfeUWQ_uZRgXD5Ma/player.png',
+      enemy: 'https://file.garden/ZfeUWQ_uZRgXD5Ma/enemy.png',
+      coin: 'https://file.garden/ZfeUWQ_uZRgXD5Ma/coin.png',
+      exit: 'https://file.garden/ZfeUWQ_uZRgXD5Ma/exit.png'
+    };
+
+    let keys = {};
+    let cameraX = 0;
+    let coinsCollected = 0;
+    let win = false;
+    let special = false;
+
+    const spawn = { x: TILE_SIZE * 2, y: TILE_SIZE * (LEVEL_HEIGHT - 3) };
+    let player;
+    const enemies = [];
+    const coins = [];
+    const platforms = [];
+    let exit;
+
+    class Entity {
+      constructor(x, y, w, h, sprite) {
+        this.x = x; this.y = y; this.w = w; this.h = h;
+        this.sprite = sprite;
+        this.vx = 0; this.vy = 0;
+      }
+      draw() {
+        ctx.drawImage(this.sprite, this.x - cameraX, this.y, this.w, this.h);
+      }
+    }
+
+    function loadAssets(callback) {
+      let loaded = 0;
+      const total = Object.keys(assetUrls).length;
+      for (let key in assetUrls) {
+        const img = new Image(); img.src = assetUrls[key];
+        img.onload = () => { assets[key] = img; if (++loaded === total) callback(); };
+      }
+    }
+
+    function initLevel() {
+      // ground
+      for (let i = 0; i < LEVEL_WIDTH; i++) {
+        platforms.push(new Entity(i * TILE_SIZE, (LEVEL_HEIGHT - 1) * TILE_SIZE, TILE_SIZE, TILE_SIZE, assets.ground));
+      }
+      // floating platforms
+      for (let x = 10; x < 60; x += 15) {
+        platforms.push(new Entity(x * TILE_SIZE, (LEVEL_HEIGHT - 5) * TILE_SIZE, TILE_SIZE * 5, TILE_SIZE, assets.ground));
+      }
+      // additional challenge platforms
+      for (let x = 80; x < 95; x += 5) {
+        platforms.push(new Entity(x * TILE_SIZE, (LEVEL_HEIGHT - (3 + (x%10===0?5:0))) * TILE_SIZE, TILE_SIZE * 3, TILE_SIZE, assets.ground));
+      }
+
+      // enemies
+      enemies.push(new Entity(25 * TILE_SIZE, (LEVEL_HEIGHT - 2) * TILE_SIZE - TILE_SIZE, TILE_SIZE, TILE_SIZE, assets.enemy));
+      enemies.push(new Entity(55 * TILE_SIZE, (LEVEL_HEIGHT - 6) * TILE_SIZE - TILE_SIZE, TILE_SIZE, TILE_SIZE, assets.enemy));
+
+      // coins scattered
+      for (let i = 0; i < COIN_TOTAL; i++) {
+        const cx = Math.random() * (LEVEL_WIDTH - 5) * TILE_SIZE + 5 * TILE_SIZE;
+        const cy = Math.random() * (LEVEL_HEIGHT - 6) * TILE_SIZE;
+        coins.push(new Entity(cx, cy, TILE_SIZE/1.5, TILE_SIZE/1.5, assets.coin));
+      }
+
+      // exit at end
+      exit = new Entity((LEVEL_WIDTH - 2) * TILE_SIZE, (LEVEL_HEIGHT - 2) * TILE_SIZE - TILE_SIZE, TILE_SIZE, TILE_SIZE, assets.exit);
+
+      // player
+      player = new Entity(spawn.x, spawn.y, TILE_SIZE, TILE_SIZE, assets.player);
+    }
+
+    function resetLevel() {
+      coinsCollected = 0;
+      win = false;
+      special = false;
+      cameraX = 0;
+      coins.length = 0;
+      enemies.length = 0;
+      platforms.length = 0;
+      initLevel();
+    }
+
+    function update() {
+      if (win) return;
+      // input
+      if (keys.ArrowLeft) player.vx = -2;
+      else if (keys.ArrowRight) player.vx = 2;
+      else player.vx = 0;
+      if (keys.ArrowUp && player.onGround) { player.vy = -10; player.onGround = false; }
+
+      // physics
+      player.vy += GRAVITY;
+      player.x += player.vx;
+      player.y += player.vy;
+
+      // collisions
+      player.onGround = false;
+      for (let plat of platforms) {
+        if (player.x < plat.x + plat.w && player.x + player.w > plat.x && player.y < plat.y + plat.h && player.y + player.h > plat.y) {
+          // determine overlap
+          const dx = (player.x + player.w/2) - (plat.x + plat.w/2);
+          const dy = (player.y + player.h/2) - (plat.y + plat.h/2);
+          const wy = (player.w + plat.w) / 2;
+          const hx = (player.h + plat.h) / 2;
+          if (Math.abs(dx) < wy && Math.abs(dy) < hx) {
+            const overlapX = wy - Math.abs(dx);
+            const overlapY = hx - Math.abs(dy);
+            if (overlapX < overlapY) {
+              player.x += dx > 0 ? overlapX : -overlapX;
+            } else {
+              player.y += dy > 0 ? overlapY : -overlapY;
+              player.vy = 0;
+              if (dy < 0) player.onGround = true;
+            }
+          }
+        }
+      }
+
+      // pit detection
+      if (player.y > LEVEL_HEIGHT * TILE_SIZE) resetLevel();
+
+      // enemy collision
+      for (let e of enemies) {
+        if (player.x < e.x + e.w && player.x + player.w > e.x && player.y < e.y + e.h && player.y + player.h > e.y) {
+          resetLevel();
+        }
+      }
+
+      // coin collection
+      for (let i = coins.length - 1; i >= 0; i--) {
+        const c = coins[i];
+        if (player.x < c.x + c.w && player.x + player.w > c.x && player.y < c.y + c.h && player.y + player.h > c.y) {
+          coins.splice(i,1);
+          coinsCollected++;
+        }
+      }
+
+      // exit
+      if (player.x + player.w > exit.x && player.x < exit.x + exit.w && player.y + player.h > exit.y && player.y < exit.y + exit.h) {
+        win = true;
+        if (coinsCollected >= COIN_TOTAL) special = true;
+      }
+
+      // camera follow
+      cameraX = player.x - canvas.width / 2;
+      cameraX = Math.max(0, Math.min(cameraX, LEVEL_WIDTH * TILE_SIZE - canvas.width));
+    }
+
+    function draw() {
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      // platforms
+      for (let plat of platforms) plat.draw();
+      // coins
+      for (let c of coins) c.draw();
+      // enemies
+      for (let e of enemies) e.draw();
+      // exit
+      exit.draw();
+      // player
+      player.draw();
+      // HUD
+      ctx.fillStyle = '#000';
+      ctx.font = '20px Arial';
+      ctx.fillText(`Coins: ${coinsCollected}/${COIN_TOTAL}`, 20, 30);
+      if (win) {
+        ctx.fillText('You Win!', cameraX + canvas.width/2 - 50, canvas.height/2);
+        if (special) ctx.fillText('Perfect! All coins collected!', cameraX + canvas.width/2 - 120, canvas.height/2 + 30);
+      }
+    }
+
+    function loop() {
+      update();
+      draw();
+      requestAnimationFrame(loop);
+    }
+
+    window.addEventListener('keydown', e => keys[e.key] = true);
+    window.addEventListener('keyup', e => keys[e.key] = false);
+
+    loadAssets(() => {
+      initLevel();
+      loop();
+    });
+  </script>
+</body>
+</html>
