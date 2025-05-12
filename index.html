@@ -5,219 +5,158 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>HTML Platformer</title>
   <style>
-    * { margin: 0; padding: 0; }
-    canvas { display: block; }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    #game-container { width: 100%; max-width: 800px; margin: 0 auto; overflow: hidden; position: relative; }
+    canvas { display: block; width: 100%; height: 600px; background: #87ceeb; }
   </style>
 </head>
 <body>
-  <canvas id="game"></canvas>
+  <div id="game-container">
+    <canvas id="game"></canvas>
+  </div>
   <script>
     const canvas = document.getElementById('game');
     const ctx = canvas.getContext('2d');
 
-    window.addEventListener('resize', resizeCanvas);
+    // responsive sizing to container
     function resizeCanvas() {
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
+      canvas.width = canvas.clientWidth;
+      canvas.height = canvas.clientHeight;
     }
+    window.addEventListener('resize', resizeCanvas);
     resizeCanvas();
 
-    const TILE_SIZE = 48;
+    const TILE_SIZE = 32;  // sprites are 16x16, scaled to 32x32
     const GRAVITY = 0.6;
-    const LEVEL_WIDTH = 80; // in tiles
-    const LEVEL_HEIGHT = 20;
+    const LEVEL_WIDTH = 120;
+    const LEVEL_HEIGHT = 25;
     const COIN_TOTAL = 50;
 
-    const assets = {};
-    const assetUrls = {
+    let keys = {}, coinsCollected = 0, win = false, perfect = false;
+    let cameraX = 0, cameraY = 0;
+
+    const spawn = { x: TILE_SIZE*2, y: TILE_SIZE*(LEVEL_HEIGHT-3) };
+    let player, enemies = [], coins = [], platforms = [], exit;
+
+    const assets = {}, assetUrls = {
       ground: 'https://file.garden/ZfeUWQ_uZRgXD5Ma/costume1.png',
       player: 'https://file.garden/ZfeUWQ_uZRgXD5Ma/player.png',
-      enemy: 'https://file.garden/ZfeUWQ_uZRgXD5Ma/enemy.png',
-      coin: 'https://file.garden/ZfeUWQ_uZRgXD5Ma/coin.png',
-      exit: 'https://file.garden/ZfeUWQ_uZRgXD5Ma/exit.png'
+      enemy:  'https://file.garden/ZfeUWQ_uZRgXD5Ma/enemy.png',
+      coin:   'https://file.garden/ZfeUWQ_uZRgXD5Ma/coin.png',
+      exit:   'https://file.garden/ZfeUWQ_uZRgXD5Ma/exit.png'
     };
 
-    let keys = {};
-    let cameraX = 0;
-    let coinsCollected = 0;
-    let win = false;
-    let perfect = false;
-
-    const spawn = { x: TILE_SIZE * 2, y: TILE_SIZE * (LEVEL_HEIGHT - 3) };
-    let player;
-    const enemies = [];
-    const coins = [];
-    const platforms = [];
-    let exit;
-
     class Entity {
-      constructor(x, y, w, h, sprite) {
-        this.x = x; this.y = y;
-        this.w = w; this.h = h;
-        this.sprite = sprite;
-        this.vx = 0; this.vy = 0;
-        this.onGround = false;
-      }
-      draw() {
-        ctx.drawImage(this.sprite, this.x - cameraX, this.y, this.w, this.h);
-      }
+      constructor(x,y,w,h,sprite){ this.x=x;this.y=y;this.w=w;this.h=h;this.sprite=sprite;this.vx=0;this.vy=0;this.onGround=false; }
+      draw(){ ctx.drawImage(this.sprite, this.x-cameraX, this.y-cameraY, this.w, this.h); }
     }
 
-    function loadAssets(callback) {
-      let loaded = 0;
-      const total = Object.keys(assetUrls).length;
-      for (let key in assetUrls) {
-        const img = new Image(); img.src = assetUrls[key];
-        img.onload = () => { assets[key] = img; if (++loaded === total) callback(); };
-      }
+    function loadAssets(cb){ let loaded=0, total=Object.keys(assetUrls).length;
+      for(let k in assetUrls){ let img=new Image(); img.src=assetUrls[k]; img.onload=()=>{ assets[k]=img; if(++loaded===total)cb(); }; }
     }
 
     const levelData = {
       platforms: [
-        // ground line
-        ...Array.from({length: LEVEL_WIDTH}, (_, i) => ({x: i, y: LEVEL_HEIGHT - 1, w: 1})),
-        // varied ground islands and walls
-        {x: 20, y: LEVEL_HEIGHT - 1, w: 10},
-        {x: 40, y: LEVEL_HEIGHT - 3, w: 5},
-        {x: 60, y: LEVEL_HEIGHT - 5, w: 8},
-        {x: 75, y: LEVEL_HEIGHT - 2, w: 4},
-        // floating platforms
-        {x: 8, y: LEVEL_HEIGHT - 6, w: 4},
-        {x: 16, y: LEVEL_HEIGHT - 8, w: 3},
-        {x: 28, y: LEVEL_HEIGHT - 10, w: 5},
-        {x: 45, y: LEVEL_HEIGHT - 7, w: 4},
-        {x: 55, y: LEVEL_HEIGHT - 9, w: 3},
-        {x: 68, y: LEVEL_HEIGHT - 6, w: 4}
+        // ground with pits
+        ...Array.from({length:30},(_,i)=>({x:i,y:LEVEL_HEIGHT-1,w:1})),
+        ...Array.from({length:10},(_,i)=>({x:40+i,y:LEVEL_HEIGHT-1,w:1})),
+        ...Array.from({length:30},(_,i)=>({x:60+i,y:LEVEL_HEIGHT-1,w:1})),
+        // rising staircase
+        ...Array.from({length:8},(_,i)=>({x:20+i,y:LEVEL_HEIGHT-2-i,w:1})),
+        // big platforms with steps underneath
+        {x:100,y:LEVEL_HEIGHT-6,w:6},
+        ...Array.from({length:5},(_,i)=>({x:100+i,y:LEVEL_HEIGHT-5,w:1})),
+        ...Array.from({length:5},(_,i)=>({x:101+i,y:LEVEL_HEIGHT-4,w:1})),
+        {x:120,y:LEVEL_HEIGHT-3,w:4},
+        ...Array.from({length:3},(_,i)=>({x:120+i,y:LEVEL_HEIGHT-2,w:1})),
+        // floating varied
+        {x:15,y:LEVEL_HEIGHT-8,w:3},
+        {x:30,y:LEVEL_HEIGHT-10,w:4},
+        {x:50,y:LEVEL_HEIGHT-7,w:5},
+        {x:75,y:LEVEL_HEIGHT-9,w:3}
       ],
-      enemies: [
-        {x: 24, y: LEVEL_HEIGHT - 2},
-        {x: 50, y: LEVEL_HEIGHT - 6},
-        {x: 65, y: LEVEL_HEIGHT - 2}
-      ],
-      exit: {x: LEVEL_WIDTH - 3, y: LEVEL_HEIGHT - 2}
+      enemies: [ {x:25,y:LEVEL_HEIGHT-2}, {x:55,y:LEVEL_HEIGHT-8}, {x:105,y:LEVEL_HEIGHT-7} ],
+      exit: {x:LEVEL_WIDTH-5, y:LEVEL_HEIGHT-2}
     };
 
-    function initLevel() {
+    function initLevel(){
+      platforms = []; enemies = []; coins = [];
       // platforms
-      for (let p of levelData.platforms) {
-        platforms.push(new Entity(p.x * TILE_SIZE, p.y * TILE_SIZE, p.w * TILE_SIZE, TILE_SIZE, assets.ground));
-      }
-      // enemies with patrol
-      for (let e of levelData.enemies) {
-        const en = new Entity(e.x * TILE_SIZE, e.y * TILE_SIZE - TILE_SIZE, TILE_SIZE, TILE_SIZE, assets.enemy);
-        en.vx = 1.5;
-        enemies.push(en);
-      }
-      // coins placed above each platform
-      let coinCount = 0;
-      for (let plat of platforms) {
-        if (coinCount >= COIN_TOTAL) break;
-        // one coin per tile on platform
-        for (let i = 0; i < plat.w / TILE_SIZE && coinCount < COIN_TOTAL; i++) {
-          coins.push(new Entity(plat.x + i * TILE_SIZE + TILE_SIZE/4, plat.y - TILE_SIZE, TILE_SIZE/2, TILE_SIZE/2, assets.coin));
-          coinCount++;
+      levelData.platforms.forEach(p=> platforms.push(new Entity(p.x*TILE_SIZE, p.y*TILE_SIZE, p.w*TILE_SIZE, TILE_SIZE, assets.ground)));
+      // enemies
+      levelData.enemies.forEach(e=>{
+        let en=new Entity(e.x*TILE_SIZE,e.y*TILE_SIZE-TILE_SIZE,TILE_SIZE,TILE_SIZE,assets.enemy);
+        en.vx=1.5; enemies.push(en);
+      });
+      // coins atop each platform
+      let count=0;
+      platforms.forEach(p=>{
+        for(let i=0;i<p.w/TILE_SIZE && count<COIN_TOTAL;i++){
+          coins.push(new Entity(p.x+i*TILE_SIZE+TILE_SIZE/4, p.y-TILE_SIZE, TILE_SIZE/2, TILE_SIZE/2, assets.coin));
+          count++;
         }
-      }
+      });
       // exit
-      exit = new Entity(levelData.exit.x * TILE_SIZE, levelData.exit.y * TILE_SIZE - TILE_SIZE, TILE_SIZE, TILE_SIZE, assets.exit);
+      exit = new Entity(levelData.exit.x*TILE_SIZE, levelData.exit.y*TILE_SIZE-TILE_SIZE, TILE_SIZE, TILE_SIZE, assets.exit);
       // player
       player = new Entity(spawn.x, spawn.y, TILE_SIZE, TILE_SIZE, assets.player);
     }
 
-    function resetLevel() {
-      coinsCollected = 0;
-      win = false; perfect = false;
-      cameraX = 0;
-      [platforms, enemies, coins].forEach(arr => arr.length = 0);
-      initLevel();
-    }
+    function resetLevel(){ coinsCollected=0; win=false; perfect=false; cameraX=cameraY=0; initLevel(); }
 
-    function update() {
-      if (win) return;
+    function update(){ if(win) return;
       // input
-      player.vx = keys.ArrowLeft ? -3 : keys.ArrowRight ? 3 : 0;
-      if (keys.ArrowUp && player.onGround) { player.vy = -12; player.onGround = false; }
-      player.vy += GRAVITY;
-      player.x += player.vx;
-      player.y += player.vy;
-
-      // collisions with platforms
-      player.onGround = false;
-      for (let plat of platforms) {
-        if (player.x < plat.x + plat.w && player.x + player.w > plat.x && player.y < plat.y + plat.h && player.y + player.h > plat.y) {
-          const overlapX = Math.min(player.x + player.w - plat.x, plat.x + plat.w - player.x);
-          const overlapY = Math.min(player.y + player.h - plat.y, plat.y + plat.h - player.y);
-          if (overlapX > overlapY) {
-            if (player.y < plat.y) { player.y = plat.y - player.h; player.vy = 0; player.onGround = true; }
-            else player.y = plat.y + plat.h;
-          } else {
-            if (player.x < plat.x) player.x = plat.x - player.w;
-            else player.x = plat.x + plat.w;
+      player.vx = keys.ArrowLeft?-3:keys.ArrowRight?3:0;
+      if(keys.ArrowUp && player.onGround){ player.vy=-12; player.onGround=false; }
+      player.vy+=GRAVITY; player.x+=player.vx; player.y+=player.vy;
+      // collisions
+      player.onGround=false;
+      platforms.forEach(pl=>{
+        if(player.x<pl.x+pl.w && player.x+player.w>pl.x && player.y<pl.y+pl.h && player.y+player.h>pl.y){
+          let dx=(player.x+player.w/2)-(pl.x+pl.w/2), dy=(player.y+player.h/2)-(pl.y+pl.h/2);
+          let wy=(player.w+pl.w)/2, hx=(player.h+pl.h)/2;
+          if(Math.abs(dx)<wy && Math.abs(dy)<hx){
+            let ovX=wy-Math.abs(dx), ovY=hx-Math.abs(dy);
+            if(ovX<ovY) player.x += dx>0?ovX:-ovX;
+            else { player.y += dy>0?ovY:-ovY; player.vy=0; if(dy<0) player.onGround=true; }
           }
         }
-      }
-
-      // fall off map
-      if (player.y > LEVEL_HEIGHT * TILE_SIZE) resetLevel();
-
-      // enemies patrol & collision
-      for (let e of enemies) {
-        e.x += e.vx;
-        // reverse on wall (map edges or platform edges)
-        let coll = platforms.some(p =>
-          e.x < p.x + p.w && e.x + e.w > p.x &&
-          e.y + e.h > p.y && e.y < p.y + p.h + TILE_SIZE &&
-          ((e.vx > 0 && e.x + e.w > p.x + p.w) || (e.vx < 0 && e.x < p.x))
-        );
-        if (e.x < 0 || e.x + e.w > LEVEL_WIDTH * TILE_SIZE || coll) {
-          e.vx *= -1;
-        }
-        if (player.x < e.x + e.w && player.x + player.w > e.x && player.y < e.y + e.h && player.y + player.h > e.y) {
-          resetLevel();
-        }
-      }
-
+      });
+      // fall off bottom
+      if(player.y>LEVEL_HEIGHT*TILE_SIZE) resetLevel();
+      // enemies
+      enemies.forEach(e=>{
+        e.x+=e.vx;
+        let collide=platforms.some(p=> e.x<p.x+p.w && e.x+e.w>p.x && e.y+e.h>p.y && e.y<p.y+p.h && ((e.vx>0&&e.x+e.w>p.x+p.w)||(e.vx<0&&e.x<p.x)));
+        if(e.x<0||e.x+e.w>LEVEL_WIDTH*TILE_SIZE||collide) e.vx*=-1;
+        if(player.x<e.x+e.w&&player.x+player.w>e.x&&player.y<e.y+e.h&&player.y+player.h>e.y) resetLevel();
+      });
       // coins
-      for (let i = coins.length - 1; i >= 0; i--) {
-        const c = coins[i];
-        if (player.x < c.x + c.w && player.x + player.w > c.x && player.y < c.y + c.h && player.y + player.h > c.y) {
-          coins.splice(i,1);
-          coinsCollected++;
-        }
+      for(let i=coins.length-1;i>=0;i--){ let c=coins[i];
+        if(player.x<c.x+c.w&&player.x+player.w>c.x&&player.y<c.y+c.h&&player.y+player.h>c.y){ coins.splice(i,1); coinsCollected++; }
       }
-
       // exit
-      if (player.x + player.w > exit.x && player.x < exit.x + exit.w && player.y + player.h > exit.y && player.y < exit.y + exit.h) {
-        win = true;
-        if (coinsCollected === COIN_TOTAL) perfect = true;
-      }
-
-      // camera
-      cameraX = Math.max(0, Math.min(player.x - canvas.width/2, LEVEL_WIDTH * TILE_SIZE - canvas.width));
+      if(player.x+player.w>exit.x&&player.x<exit.x+exit.w&&player.y+player.h>exit.y&&player.y<exit.y+exit.h){ win=true; if(coinsCollected===COIN_TOTAL) perfect=true; }
+      // camera follow both axes
+      cameraX = Math.max(0, Math.min(player.x - canvas.width/2, LEVEL_WIDTH*TILE_SIZE-canvas.width));
+      cameraY = Math.max(0, Math.min(player.y - canvas.height/2, LEVEL_HEIGHT*TILE_SIZE-canvas.height));
     }
 
-    function draw() {
+    function draw(){
       ctx.clearRect(0,0,canvas.width,canvas.height);
-      platforms.forEach(p => p.draw());
-      coins.forEach(c => c.draw());
-      enemies.forEach(e => e.draw());
-      exit.draw();
-      player.draw();
+      platforms.forEach(p=>p.draw()); coins.forEach(c=>c.draw()); enemies.forEach(e=>e.draw()); exit.draw(); player.draw();
       // HUD
-      ctx.fillStyle = '#000'; ctx.font = `${Math.floor(TILE_SIZE/1.5)}px Arial`;
-      ctx.fillText(`Coins: ${coinsCollected}/${COIN_TOTAL}`, cameraX + 20, 40);
-      if (win) {
-        const msg = perfect ? 'You Win, Congratulations for 100%ing the game!' : 'You Win';
-        ctx.fillText(msg, cameraX + canvas.width/2 - 200, canvas.height/2);
+      ctx.fillStyle='#000'; ctx.font='20px Arial';
+      ctx.fillText(`Coins: ${coinsCollected}/${COIN_TOTAL}`, cameraX+10, cameraY+30);
+      if(win){ let msg= perfect? 'You Win, Congratulations for 100%ing the game!' : 'You Win';
+        ctx.fillText(msg, cameraX+canvas.width/2-150, cameraY+canvas.height/2);
       }
     }
 
-    function loop() { update(); draw(); requestAnimationFrame(loop); }
-
-    window.addEventListener('keydown', e => keys[e.key] = true);
-    window.addEventListener('keyup', e => keys[e.key] = false);
-
-    loadAssets(() => { initLevel(); loop(); });
+    function loop(){ update(); draw(); requestAnimationFrame(loop); }
+    window.addEventListener('keydown',e=>keys[e.key]=true);
+    window.addEventListener('keyup',e=>keys[e.key]=false);
+    loadAssets(()=>{ initLevel(); loop(); });
   </script>
 </body>
 </html>
