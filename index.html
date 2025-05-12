@@ -6,19 +6,26 @@
   <title>HTML Platformer</title>
   <style>
     * { margin: 0; padding: 0; }
-    canvas { background: #87ceeb; display: block; margin: 0 auto; }
+    canvas { display: block; }
   </style>
 </head>
 <body>
-  <canvas id="game" width="800" height="450"></canvas>
+  <canvas id="game"></canvas>
   <script>
     const canvas = document.getElementById('game');
     const ctx = canvas.getContext('2d');
 
-    const TILE_SIZE = 32;
-    const GRAVITY = 0.5;
-    const LEVEL_WIDTH = 100; // 100 tiles wide
-    const LEVEL_HEIGHT = 15; // 15 tiles high
+    window.addEventListener('resize', resizeCanvas);
+    function resizeCanvas() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+    resizeCanvas();
+
+    const TILE_SIZE = 48;
+    const GRAVITY = 0.6;
+    const LEVEL_WIDTH = 80; // in tiles
+    const LEVEL_HEIGHT = 20;
     const COIN_TOTAL = 50;
 
     const assets = {};
@@ -34,7 +41,7 @@
     let cameraX = 0;
     let coinsCollected = 0;
     let win = false;
-    let special = false;
+    let perfect = false;
 
     const spawn = { x: TILE_SIZE * 2, y: TILE_SIZE * (LEVEL_HEIGHT - 3) };
     let player;
@@ -45,9 +52,11 @@
 
     class Entity {
       constructor(x, y, w, h, sprite) {
-        this.x = x; this.y = y; this.w = w; this.h = h;
+        this.x = x; this.y = y;
+        this.w = w; this.h = h;
         this.sprite = sprite;
         this.vx = 0; this.vy = 0;
+        this.onGround = false;
       }
       draw() {
         ctx.drawImage(this.sprite, this.x - cameraX, this.y, this.w, this.h);
@@ -63,96 +72,112 @@
       }
     }
 
+    const levelData = {
+      platforms: [
+        // ground line
+        ...Array.from({length: LEVEL_WIDTH}, (_, i) => ({x: i, y: LEVEL_HEIGHT - 1, w: 1})),
+        // varied ground islands and walls
+        {x: 20, y: LEVEL_HEIGHT - 1, w: 10},
+        {x: 40, y: LEVEL_HEIGHT - 3, w: 5},
+        {x: 60, y: LEVEL_HEIGHT - 5, w: 8},
+        {x: 75, y: LEVEL_HEIGHT - 2, w: 4},
+        // floating platforms
+        {x: 8, y: LEVEL_HEIGHT - 6, w: 4},
+        {x: 16, y: LEVEL_HEIGHT - 8, w: 3},
+        {x: 28, y: LEVEL_HEIGHT - 10, w: 5},
+        {x: 45, y: LEVEL_HEIGHT - 7, w: 4},
+        {x: 55, y: LEVEL_HEIGHT - 9, w: 3},
+        {x: 68, y: LEVEL_HEIGHT - 6, w: 4}
+      ],
+      enemies: [
+        {x: 24, y: LEVEL_HEIGHT - 2},
+        {x: 50, y: LEVEL_HEIGHT - 6},
+        {x: 65, y: LEVEL_HEIGHT - 2}
+      ],
+      exit: {x: LEVEL_WIDTH - 3, y: LEVEL_HEIGHT - 2}
+    };
+
     function initLevel() {
-      // ground
-      for (let i = 0; i < LEVEL_WIDTH; i++) {
-        platforms.push(new Entity(i * TILE_SIZE, (LEVEL_HEIGHT - 1) * TILE_SIZE, TILE_SIZE, TILE_SIZE, assets.ground));
+      // platforms
+      for (let p of levelData.platforms) {
+        platforms.push(new Entity(p.x * TILE_SIZE, p.y * TILE_SIZE, p.w * TILE_SIZE, TILE_SIZE, assets.ground));
       }
-      // floating platforms
-      for (let x = 10; x < 60; x += 15) {
-        platforms.push(new Entity(x * TILE_SIZE, (LEVEL_HEIGHT - 5) * TILE_SIZE, TILE_SIZE * 5, TILE_SIZE, assets.ground));
+      // enemies with patrol
+      for (let e of levelData.enemies) {
+        const en = new Entity(e.x * TILE_SIZE, e.y * TILE_SIZE - TILE_SIZE, TILE_SIZE, TILE_SIZE, assets.enemy);
+        en.vx = 1.5;
+        enemies.push(en);
       }
-      // additional challenge platforms
-      for (let x = 80; x < 95; x += 5) {
-        platforms.push(new Entity(x * TILE_SIZE, (LEVEL_HEIGHT - (3 + (x%10===0?5:0))) * TILE_SIZE, TILE_SIZE * 3, TILE_SIZE, assets.ground));
+      // coins placed above each platform
+      let coinCount = 0;
+      for (let plat of platforms) {
+        if (coinCount >= COIN_TOTAL) break;
+        // one coin per tile on platform
+        for (let i = 0; i < plat.w / TILE_SIZE && coinCount < COIN_TOTAL; i++) {
+          coins.push(new Entity(plat.x + i * TILE_SIZE + TILE_SIZE/4, plat.y - TILE_SIZE, TILE_SIZE/2, TILE_SIZE/2, assets.coin));
+          coinCount++;
+        }
       }
-
-      // enemies
-      enemies.push(new Entity(25 * TILE_SIZE, (LEVEL_HEIGHT - 2) * TILE_SIZE - TILE_SIZE, TILE_SIZE, TILE_SIZE, assets.enemy));
-      enemies.push(new Entity(55 * TILE_SIZE, (LEVEL_HEIGHT - 6) * TILE_SIZE - TILE_SIZE, TILE_SIZE, TILE_SIZE, assets.enemy));
-
-      // coins scattered
-      for (let i = 0; i < COIN_TOTAL; i++) {
-        const cx = Math.random() * (LEVEL_WIDTH - 5) * TILE_SIZE + 5 * TILE_SIZE;
-        const cy = Math.random() * (LEVEL_HEIGHT - 6) * TILE_SIZE;
-        coins.push(new Entity(cx, cy, TILE_SIZE/1.5, TILE_SIZE/1.5, assets.coin));
-      }
-
-      // exit at end
-      exit = new Entity((LEVEL_WIDTH - 2) * TILE_SIZE, (LEVEL_HEIGHT - 2) * TILE_SIZE - TILE_SIZE, TILE_SIZE, TILE_SIZE, assets.exit);
-
+      // exit
+      exit = new Entity(levelData.exit.x * TILE_SIZE, levelData.exit.y * TILE_SIZE - TILE_SIZE, TILE_SIZE, TILE_SIZE, assets.exit);
       // player
       player = new Entity(spawn.x, spawn.y, TILE_SIZE, TILE_SIZE, assets.player);
     }
 
     function resetLevel() {
       coinsCollected = 0;
-      win = false;
-      special = false;
+      win = false; perfect = false;
       cameraX = 0;
-      coins.length = 0;
-      enemies.length = 0;
-      platforms.length = 0;
+      [platforms, enemies, coins].forEach(arr => arr.length = 0);
       initLevel();
     }
 
     function update() {
       if (win) return;
       // input
-      if (keys.ArrowLeft) player.vx = -2;
-      else if (keys.ArrowRight) player.vx = 2;
-      else player.vx = 0;
-      if (keys.ArrowUp && player.onGround) { player.vy = -10; player.onGround = false; }
-
-      // physics
+      player.vx = keys.ArrowLeft ? -3 : keys.ArrowRight ? 3 : 0;
+      if (keys.ArrowUp && player.onGround) { player.vy = -12; player.onGround = false; }
       player.vy += GRAVITY;
       player.x += player.vx;
       player.y += player.vy;
 
-      // collisions
+      // collisions with platforms
       player.onGround = false;
       for (let plat of platforms) {
         if (player.x < plat.x + plat.w && player.x + player.w > plat.x && player.y < plat.y + plat.h && player.y + player.h > plat.y) {
-          // determine overlap
-          const dx = (player.x + player.w/2) - (plat.x + plat.w/2);
-          const dy = (player.y + player.h/2) - (plat.y + plat.h/2);
-          const wy = (player.w + plat.w) / 2;
-          const hx = (player.h + plat.h) / 2;
-          if (Math.abs(dx) < wy && Math.abs(dy) < hx) {
-            const overlapX = wy - Math.abs(dx);
-            const overlapY = hx - Math.abs(dy);
-            if (overlapX < overlapY) {
-              player.x += dx > 0 ? overlapX : -overlapX;
-            } else {
-              player.y += dy > 0 ? overlapY : -overlapY;
-              player.vy = 0;
-              if (dy < 0) player.onGround = true;
-            }
+          const overlapX = Math.min(player.x + player.w - plat.x, plat.x + plat.w - player.x);
+          const overlapY = Math.min(player.y + player.h - plat.y, plat.y + plat.h - player.y);
+          if (overlapX > overlapY) {
+            if (player.y < plat.y) { player.y = plat.y - player.h; player.vy = 0; player.onGround = true; }
+            else player.y = plat.y + plat.h;
+          } else {
+            if (player.x < plat.x) player.x = plat.x - player.w;
+            else player.x = plat.x + plat.w;
           }
         }
       }
 
-      // pit detection
+      // fall off map
       if (player.y > LEVEL_HEIGHT * TILE_SIZE) resetLevel();
 
-      // enemy collision
+      // enemies patrol & collision
       for (let e of enemies) {
+        e.x += e.vx;
+        // reverse on wall (map edges or platform edges)
+        let coll = platforms.some(p =>
+          e.x < p.x + p.w && e.x + e.w > p.x &&
+          e.y + e.h > p.y && e.y < p.y + p.h + TILE_SIZE &&
+          ((e.vx > 0 && e.x + e.w > p.x + p.w) || (e.vx < 0 && e.x < p.x))
+        );
+        if (e.x < 0 || e.x + e.w > LEVEL_WIDTH * TILE_SIZE || coll) {
+          e.vx *= -1;
+        }
         if (player.x < e.x + e.w && player.x + player.w > e.x && player.y < e.y + e.h && player.y + player.h > e.y) {
           resetLevel();
         }
       }
 
-      // coin collection
+      // coins
       for (let i = coins.length - 1; i >= 0; i--) {
         const c = coins[i];
         if (player.x < c.x + c.w && player.x + player.w > c.x && player.y < c.y + c.h && player.y + player.h > c.y) {
@@ -164,49 +189,35 @@
       // exit
       if (player.x + player.w > exit.x && player.x < exit.x + exit.w && player.y + player.h > exit.y && player.y < exit.y + exit.h) {
         win = true;
-        if (coinsCollected >= COIN_TOTAL) special = true;
+        if (coinsCollected === COIN_TOTAL) perfect = true;
       }
 
-      // camera follow
-      cameraX = player.x - canvas.width / 2;
-      cameraX = Math.max(0, Math.min(cameraX, LEVEL_WIDTH * TILE_SIZE - canvas.width));
+      // camera
+      cameraX = Math.max(0, Math.min(player.x - canvas.width/2, LEVEL_WIDTH * TILE_SIZE - canvas.width));
     }
 
     function draw() {
       ctx.clearRect(0,0,canvas.width,canvas.height);
-      // platforms
-      for (let plat of platforms) plat.draw();
-      // coins
-      for (let c of coins) c.draw();
-      // enemies
-      for (let e of enemies) e.draw();
-      // exit
+      platforms.forEach(p => p.draw());
+      coins.forEach(c => c.draw());
+      enemies.forEach(e => e.draw());
       exit.draw();
-      // player
       player.draw();
       // HUD
-      ctx.fillStyle = '#000';
-      ctx.font = '20px Arial';
-      ctx.fillText(`Coins: ${coinsCollected}/${COIN_TOTAL}`, 20, 30);
+      ctx.fillStyle = '#000'; ctx.font = `${Math.floor(TILE_SIZE/1.5)}px Arial`;
+      ctx.fillText(`Coins: ${coinsCollected}/${COIN_TOTAL}`, cameraX + 20, 40);
       if (win) {
-        ctx.fillText('You Win!', cameraX + canvas.width/2 - 50, canvas.height/2);
-        if (special) ctx.fillText('Perfect! All coins collected!', cameraX + canvas.width/2 - 120, canvas.height/2 + 30);
+        const msg = perfect ? 'You Win, Congratulations for 100%ing the game!' : 'You Win';
+        ctx.fillText(msg, cameraX + canvas.width/2 - 200, canvas.height/2);
       }
     }
 
-    function loop() {
-      update();
-      draw();
-      requestAnimationFrame(loop);
-    }
+    function loop() { update(); draw(); requestAnimationFrame(loop); }
 
     window.addEventListener('keydown', e => keys[e.key] = true);
     window.addEventListener('keyup', e => keys[e.key] = false);
 
-    loadAssets(() => {
-      initLevel();
-      loop();
-    });
+    loadAssets(() => { initLevel(); loop(); });
   </script>
 </body>
 </html>
